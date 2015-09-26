@@ -35,11 +35,12 @@ protected:
     ~Clang();
 
     static v8::Handle<v8::Value> New(const v8::Arguments& args);
+    static v8::Handle<v8::Value> addSourceFile(const v8::Arguments& args);
     static v8::Handle<v8::Value> findFunction(const v8::Arguments& args);
 
 private:
     CXIndex index;
-    CXTranslationUnit tu;
+    std::vector<CXTranslationUnit> tus;
 };
 
 #endif
