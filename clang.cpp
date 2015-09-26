@@ -1,13 +1,12 @@
 #include <node.h>
 #include <v8.h>
 
+#include <vector>
 #include <iostream>
 
 #include "clang.h"
 
 using namespace v8;
-
-
 
 Persistent<FunctionTemplate> Clang::constructor;
 
@@ -24,8 +23,7 @@ void Clang::Init(Handle<Object> target)
   constructor->SetClassName(name);
 
   // Add all prototype methods, getters and setters here.
-  NODE_SET_PROTOTYPE_METHOD(constructor, "value", Value);
-  NODE_SET_PROTOTYPE_METHOD(constructor, "next", Next);
+  NODE_SET_PROTOTYPE_METHOD(constructor, "findFunction", findFunction);
 
   // This has to be last, otherwise the properties won't show up on the
   // object in JavaScript.
@@ -40,6 +38,11 @@ Clang::Clang(std::string filename)
   tu = clang_parseTranslationUnit(index, filename.c_str(), NULL, 0, NULL, 0, 0);
 }
 
+Clang::~Clang()
+{
+  clang_disposeTranslationUnit(tu);
+  clang_disposeIndex(index);
+}
 
 Handle<Value> Clang::New(const Arguments& args)
 {
@@ -76,84 +79,87 @@ Handle<Value> Clang::New(const Arguments& args)
   return args.This();
 }
 
+//std::vector<std::string> str_vec;
+
 CXChildVisitResult Clang::visitor(CXCursor c1, CXCursor c2, void* ptr)
 {
-  CXString s = clang_getCursorSpelling(c1);
+  SearchInfo *sinfo_ptr = (SearchInfo*)ptr;
 
-  std::cout << "visiting: " <<  clang_getCString(s) << "\n";
+  CXCursorKind kind = clang_getCursorKind(c1);
+  if( kind == CXCursor_FunctionDecl || kind == CXCursor_CallExpr )
+  {
+    std::string spelling(clang_getCString(clang_getCursorSpelling(c1)));
+    if(spelling == sinfo_ptr->searchName)
+    {
+      CXFile cxfile;
+      unsigned line, column, offset;
+      clang_getSpellingLocation(clang_getCursorLocation(c1),
+                &cxfile, &line, &column, &offset);
 
+      CXString fn = clang_getFileName(cxfile);
+      std::string filename(clang_getCString(fn));
+
+      ResultInfo res;
+      res.spelling = spelling;
+      res.filename = filename;
+      res.line     = line;
+      sinfo_ptr->results.push_back(res);
+    }
+  }
   return CXChildVisit_Recurse; // CXChildVisit_Continue, CXChildVisit_Break
 }
 
 
-Handle<Value> Clang::Next(const Arguments& args)
+Handle<Value> Clang::findFunction(const Arguments& args)
 {
   HandleScope scope;
 
-  if (args.Length() > 0)
+  SearchInfo sinfo;
+
+  if (args.Length() < 1)
   {
     return ThrowException(Exception::TypeError(
-                            String::New("Argument not expected")));
+                            String::New("Missing argument function name")));
   }
+
+  if ( !args[0]->IsString())
+  {
+    return ThrowException(Exception::TypeError(
+                            String::New("Argument must be a string")));
+  }
+
+  String::Utf8Value str(args[0]->ToString());
+  std::string funcname(*str);
+
+  sinfo.searchName = funcname;
 
   // Retrieves the pointer to the wrapped object instance.
   Clang * obj = ObjectWrap::Unwrap<Clang>(args.This());
 
   CXCursor cursor = clang_getTranslationUnitCursor(obj->tu);
 
-  unsigned res = clang_visitChildren(cursor, obj->visitor, NULL);
+  unsigned res = clang_visitChildren(cursor, obj->visitor, &sinfo);
+  int i = 0;
+  Local<Array> Result = Array::New();
+  Local<Object> res_obj = Object::New();
+  res_obj->Set(String::New("result"), Integer::New(res));
+  Result->Set(i++, res_obj);
+  for (std::vector<ResultInfo>::iterator it = sinfo.results.begin() ; it != sinfo.results.end(); ++it)
+  {
+    HandleScope scope;
+    Local<Object> node_obj = Object::New();
+    node_obj->Set(String::New("name"), String::New((*it).spelling.c_str()));
+    node_obj->Set(String::New("filename"), String::New((*it).filename.c_str()));
+    node_obj->Set(String::New("line"), Integer::New((*it).line));
 
-  return scope.Close(Integer::New(0));
+    Result->Set(i++, node_obj);
+  }
+
+  return scope.Close(Result);
 }
-
-
-
-Handle<Value> Clang::Value(const Arguments& args)
-{
-  HandleScope scope;
-
-  // Retrieves the pointer to the wrapped object instance.
-  Clang * obj = ObjectWrap::Unwrap<Clang>(args.This());
-
-  return scope.Close(Integer::New(obj->value_));
-}
-
-
-
-
-Handle<Value> Method(const Arguments& args)
-{
-  HandleScope scope;
-
-  return scope.Close(String::New("hello"));
-}
-
-Handle<Value> Method2(const Arguments& args)
-{
-  HandleScope scope;
-
-  return scope.Close(String::New("world"));
-}
-
-Handle<Value> createIndex(const Arguments& args)
-{
-  HandleScope scope;
-
-  CXIndex idx = clang_createIndex(0, 1);
-
-  return scope.Close(String::New("world"));
-}
-
 
 void init(Handle<Object> target)
 {
-  target->Set(String::NewSymbol("hello"),
-              FunctionTemplate::New(Method)->GetFunction());
-  target->Set(String::NewSymbol("world"),
-              FunctionTemplate::New(Method2)->GetFunction());
-  target->Set(String::NewSymbol("createIndex"),
-              FunctionTemplate::New(createIndex)->GetFunction());
-
   Clang::Init(target);
 }
 
