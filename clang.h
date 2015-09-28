@@ -18,6 +18,7 @@ ResultInfo;
 
 typedef struct
 {
+  const v8::Arguments *args;
   std::string searchName;
   std::vector<ResultInfo> results;
 }

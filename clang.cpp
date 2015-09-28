@@ -120,6 +120,8 @@ CXChildVisitResult Clang::visitor(CXCursor c1, CXCursor c2, void* ptr)
     std::string spelling(clang_getCString(clang_getCursorSpelling(c1)));
     if(spelling == sinfo_ptr->searchName)
     {
+      HandleScope scope;
+
       CXFile cxfile;
       unsigned line, column, offset;
       clang_getSpellingLocation(clang_getCursorLocation(c1),
@@ -133,6 +135,15 @@ CXChildVisitResult Clang::visitor(CXCursor c1, CXCursor c2, void* ptr)
       res.filename = filename;
       res.line     = line;
       sinfo_ptr->results.push_back(res);
+
+      Handle<Value> argv[4] = {
+        String::New("visitChildren"), // event name
+        String::New(spelling.c_str()),
+        String::New(filename.c_str()),
+        Integer::New(line)
+      };
+
+      node::MakeCallback(sinfo_ptr->args->This(), "emit", 4, argv);
     }
   }
   return CXChildVisit_Recurse; // CXChildVisit_Continue, CXChildVisit_Break
@@ -170,6 +181,7 @@ Handle<Value> Clang::findFunction(const Arguments& args)
 
     SearchInfo sinfo;
     sinfo.searchName = funcname;
+    sinfo.args = &args;
 
     CXCursor cursor = clang_getTranslationUnitCursor(*it);
 
